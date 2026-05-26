@@ -1,4 +1,5 @@
 import os
+import time
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -222,12 +223,33 @@ def retrieve_top_k(question: str, docs: List[Document], k: int = 6) -> List[Docu
     return [d for s, d in scored[:k] if s > 0] or [d for _, d in scored[:k]]
 
 
+def invoke_with_retries(llm, messages, attempts: int = 3, base_sleep: float = 1.5):
+    last_error = None
+    for i in range(attempts):
+        try:
+            return llm.invoke(messages)
+        except Exception as e:
+            last_error = e
+            if i < attempts - 1:
+                time.sleep(base_sleep * (2**i))
+    raise last_error
+
+
 def answer_grounded(llm, question: str, docs: List[Document]) -> Tuple[str, List[Dict[str, str]]]:
-    top_docs = retrieve_top_k(question, docs)
+    top_docs = retrieve_top_k(question, docs, k=4)
+    # Keep context compact to reduce token usage and rate-limit failures.
+    compact_docs: List[Document] = []
+    for d in top_docs:
+        compact_docs.append(
+            Document(
+                page_content=d.page_content[:900],
+                metadata=d.metadata,
+            )
+        )
     context = "\n\n".join(
         [
             f"[Source: {d.metadata['source']} | Type: {d.metadata['source_type']} | Chunk: {d.metadata['chunk']}]\n{d.page_content}"
-            for d in top_docs
+            for d in compact_docs
         ]
     )
 
@@ -237,11 +259,12 @@ def answer_grounded(llm, question: str, docs: List[Document]) -> Tuple[str, List
     )
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Question: {question}\n\nContext:\n{context}")]
     try:
-        result = llm.invoke(messages)
+        result = invoke_with_retries(llm, messages, attempts=3, base_sleep=1.5)
     except Exception as e:
         raise RuntimeError(
             "LLM request failed while answering (likely rate limit/quota). "
-            "Retry in a moment, switch provider/model, or shorten the question/context."
+            "Retry in a moment, switch provider/model, or shorten the question/context. "
+            "Tip: set a lower-cost model like gpt-4o-mini and try again."
         ) from e
     answer = result.content if hasattr(result, "content") else str(result)
 
@@ -251,7 +274,7 @@ def answer_grounded(llm, question: str, docs: List[Document]) -> Tuple[str, List
             "chunk": str(d.metadata.get("chunk", "")),
             "type": str(d.metadata.get("source_type", "")),
         }
-        for d in top_docs
+        for d in compact_docs
     ]
     return answer, citations
 
