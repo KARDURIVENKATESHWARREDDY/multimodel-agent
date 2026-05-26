@@ -260,13 +260,22 @@ def answer_grounded(llm, question: str, docs: List[Document]) -> Tuple[str, List
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Question: {question}\n\nContext:\n{context}")]
     try:
         result = invoke_with_retries(llm, messages, attempts=3, base_sleep=1.5)
+        answer = result.content if hasattr(result, "content") else str(result)
     except Exception as e:
-        raise RuntimeError(
-            "LLM request failed while answering (likely rate limit/quota). "
-            "Retry in a moment, switch provider/model, or shorten the question/context. "
-            "Tip: set a lower-cost model like gpt-4o-mini and try again."
-        ) from e
-    answer = result.content if hasattr(result, "content") else str(result)
+        fallback_points = []
+        for d in compact_docs[:3]:
+            excerpt = d.page_content.strip().replace("\n", " ")
+            if len(excerpt) > 220:
+                excerpt = excerpt[:220] + "..."
+            fallback_points.append(
+                f"- [{d.metadata.get('source', 'unknown')} | chunk {d.metadata.get('chunk', '?')}] {excerpt}"
+            )
+
+        answer = (
+            "Live LLM answer is temporarily unavailable due to provider rate-limit/quota. "
+            "Showing an extractive fallback from the most relevant uploaded chunks:\n\n"
+            + "\n".join(fallback_points)
+        )
 
     citations = [
         {
