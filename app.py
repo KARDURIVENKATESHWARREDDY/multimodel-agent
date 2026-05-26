@@ -201,7 +201,13 @@ def summarize_documents(llm, sources: List[ExtractedSource]) -> str:
         ]
     )
     chain = prompt | llm
-    result = chain.invoke({"content": joined})
+    try:
+        result = chain.invoke({"content": joined})
+    except Exception as e:
+        raise RuntimeError(
+            "LLM request failed while summarizing. This can happen due to rate limits or quota. "
+            "Try again shortly, switch provider/model, or reduce document size."
+        ) from e
     return result.content if hasattr(result, "content") else str(result)
 
 
@@ -230,7 +236,13 @@ def answer_grounded(llm, question: str, docs: List[Document]) -> Tuple[str, List
         "Cite sources at the end as bullet list with source name and chunk."
     )
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Question: {question}\n\nContext:\n{context}")]
-    result = llm.invoke(messages)
+    try:
+        result = llm.invoke(messages)
+    except Exception as e:
+        raise RuntimeError(
+            "LLM request failed while answering (likely rate limit/quota). "
+            "Retry in a moment, switch provider/model, or shorten the question/context."
+        ) from e
     answer = result.content if hasattr(result, "content") else str(result)
 
     citations = [
@@ -263,7 +275,13 @@ def resume_analysis(llm, resume_text: str, job_description: str) -> str:
         ]
     )
     chain = prompt | llm
-    result = chain.invoke({"resume": resume_text, "jd": job_description})
+    try:
+        result = chain.invoke({"resume": resume_text, "jd": job_description})
+    except Exception as e:
+        raise RuntimeError(
+            "LLM request failed during resume analysis (likely rate limit/quota). "
+            "Retry later, switch provider/model, or use shorter resume/JD text."
+        ) from e
     return result.content if hasattr(result, "content") else str(result)
 
 
@@ -366,7 +384,10 @@ def run_document_mode(llm) -> None:
 
         if st.button("Summarize Content"):
             with st.spinner("Summarizing..."):
-                st.session_state.summary = summarize_documents(llm, st.session_state.sources)
+                try:
+                    st.session_state.summary = summarize_documents(llm, st.session_state.sources)
+                except Exception as e:
+                    st.error(str(e))
 
         if st.session_state.summary:
             st.markdown("### Summary")
@@ -377,14 +398,17 @@ def run_document_mode(llm) -> None:
         question = st.text_input("Ask about the uploaded content")
         if st.button("Get Answer") and question.strip():
             with st.spinner("Answering from document context..."):
-                answer, citations = answer_grounded(llm, question, st.session_state.docs)
-            st.session_state.qa_log.append(
-                {
-                    "question": question,
-                    "answer": answer,
-                    "citations": citations,
-                }
-            )
+                try:
+                    answer, citations = answer_grounded(llm, question, st.session_state.docs)
+                    st.session_state.qa_log.append(
+                        {
+                            "question": question,
+                            "answer": answer,
+                            "citations": citations,
+                        }
+                    )
+                except Exception as e:
+                    st.error(str(e))
 
         if st.session_state.qa_log:
             for i, item in enumerate(st.session_state.qa_log, start=1):
@@ -415,10 +439,13 @@ def run_resume_mode(llm) -> None:
 
     if st.button("Analyze Match") and resume_text.strip() and job_description.strip():
         with st.spinner("Analyzing resume against job description..."):
-            analysis = resume_analysis(llm, resume_text, job_description)
-        st.markdown("### Match Analysis")
-        st.write(analysis)
-        export_download_buttons("Download Analysis as", analysis, "resume_match_analysis")
+            try:
+                analysis = resume_analysis(llm, resume_text, job_description)
+                st.markdown("### Match Analysis")
+                st.write(analysis)
+                export_download_buttons("Download Analysis as", analysis, "resume_match_analysis")
+            except Exception as e:
+                st.error(str(e))
 
 
 def main() -> None:
