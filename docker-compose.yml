@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: multimodal-document-analyzer
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    command: streamlit run app.py --server.address=0.0.0.0 --server.port=8501
+
