@@ -8,6 +8,7 @@ moviepy>=1.0.3
 pydub>=0.25.1
 reportlab>=4.2.2
 langchain>=0.2.14
+langchain-text-splitters>=0.2.2
 langchain-core>=0.2.35
 langchain-community>=0.2.12
 langchain-openai>=0.1.22
