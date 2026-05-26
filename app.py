@@ -30,41 +30,62 @@ class ExtractedSource:
     text: str
 
 
+def get_config(key: str, default: str = "") -> str:
+    value = os.getenv(key)
+    if value not in (None, ""):
+        return value
+    try:
+        if key in st.secrets:
+            secret_value = st.secrets[key]
+            return str(secret_value) if secret_value is not None else default
+    except Exception:
+        pass
+    return default
+
+
 def configure_tracing() -> None:
-    if os.getenv("LANGSMITH_API_KEY") and os.getenv("LANGSMITH_TRACING", "true").lower() == "true":
+    if get_config("LANGSMITH_API_KEY") and get_config("LANGSMITH_TRACING", "true").lower() == "true":
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
-        os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "multimodal-document-analyzer")
+        os.environ["LANGCHAIN_API_KEY"] = get_config("LANGSMITH_API_KEY", "")
+        os.environ["LANGCHAIN_PROJECT"] = get_config("LANGSMITH_PROJECT", "multimodal-document-analyzer")
 
 
 def configure_tesseract() -> None:
-    tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip()
+    tesseract_cmd = get_config("TESSERACT_CMD", "").strip()
     if tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
 
 def get_llm():
-    provider = os.getenv("LLM_PROVIDER", "openai").lower().strip()
+    provider = get_config("LLM_PROVIDER", "openai").lower().strip()
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0)
+        api_key = get_config("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is missing. Set it in environment variables or Streamlit Secrets.")
+        return ChatOpenAI(model=get_config("OPENAI_MODEL", "gpt-4o-mini"), api_key=api_key, temperature=0)
 
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
-
-        return ChatGoogleGenerativeAI(model=os.getenv("GOOGLE_MODEL", "gemini-1.5-flash"), temperature=0)
+        api_key = get_config("GOOGLE_API_KEY", "")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is missing. Set it in environment variables or Streamlit Secrets.")
+        return ChatGoogleGenerativeAI(model=get_config("GOOGLE_MODEL", "gemini-1.5-flash"), google_api_key=api_key, temperature=0)
 
     if provider == "groq":
         from langchain_groq import ChatGroq
-
-        return ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile"), temperature=0)
+        api_key = get_config("GROQ_API_KEY", "")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY is missing. Set it in environment variables or Streamlit Secrets.")
+        return ChatGroq(model=get_config("GROQ_MODEL", "llama-3.1-70b-versatile"), api_key=api_key, temperature=0)
 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20240620"), temperature=0)
+        api_key = get_config("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY is missing. Set it in environment variables or Streamlit Secrets.")
+        return ChatAnthropic(model=get_config("ANTHROPIC_MODEL", "claude-3-5-sonnet-20240620"), api_key=api_key, temperature=0)
 
     raise ValueError("Unsupported LLM_PROVIDER. Use one of: openai, google, groq, anthropic")
 
@@ -90,7 +111,7 @@ def chunk_documents(sources: List[ExtractedSource]) -> List[Document]:
 
 def ocr_image(image_bytes: bytes) -> str:
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    return pytesseract.image_to_string(image, lang=os.getenv("OCR_LANGUAGE", "eng"))
+    return pytesseract.image_to_string(image, lang=get_config("OCR_LANGUAGE", "eng"))
 
 
 def extract_pdf(pdf_bytes: bytes) -> str:
@@ -102,7 +123,7 @@ def extract_pdf(pdf_bytes: bytes) -> str:
                 all_text.append(text)
             else:
                 page_img = page.to_image(resolution=300).original
-                all_text.append(pytesseract.image_to_string(page_img, lang=os.getenv("OCR_LANGUAGE", "eng")))
+                all_text.append(pytesseract.image_to_string(page_img, lang=get_config("OCR_LANGUAGE", "eng")))
     return "\n\n".join(all_text)
 
 
@@ -118,7 +139,7 @@ def extract_video(video_bytes: bytes) -> str:
 
     cap = cv2.VideoCapture(str(temp_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24
-    interval_seconds = float(os.getenv("VIDEO_FRAME_INTERVAL_SECONDS", "2"))
+    interval_seconds = float(get_config("VIDEO_FRAME_INTERVAL_SECONDS", "2"))
     frame_interval = max(int(fps * interval_seconds), 1)
 
     texts: List[str] = []
@@ -128,7 +149,7 @@ def extract_video(video_bytes: bytes) -> str:
         if frame_idx % frame_interval == 0:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(rgb)
-            frame_text = pytesseract.image_to_string(pil_img, lang=os.getenv("OCR_LANGUAGE", "eng"))
+            frame_text = pytesseract.image_to_string(pil_img, lang=get_config("OCR_LANGUAGE", "eng"))
             if frame_text.strip():
                 texts.append(f"[Frame {frame_idx}]\n{frame_text}")
         frame_idx += 1
@@ -412,6 +433,10 @@ def main() -> None:
         llm = get_llm()
     except Exception as e:
         st.error(f"LLM configuration error: {e}")
+        st.info(
+            "For Streamlit Cloud, add keys in App Settings -> Secrets. "
+            "Required: LLM_PROVIDER and matching API key (e.g., OPENAI_API_KEY)."
+        )
         st.stop()
 
     mode = st.radio("Mode", ["Document Analyzer", "Resume Analyzer"], horizontal=True)
